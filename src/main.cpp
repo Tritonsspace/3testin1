@@ -252,7 +252,7 @@ void loop() {
         beep();
         delay(1000);
         digitalWrite(Green, 0);
-
+//
         display.fillScreen(0x0);
         display.setTextSize(2);
         display.setCursor(10, 40);
