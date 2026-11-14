@@ -17,6 +17,10 @@ unsigned long previousHoldTime = 0;
 unsigned long previousLightTime = 0;
 
 int mode = 0;
+// 0 = Locked
+// 1 = PIN entry
+// 2 = Master mode
+// 3 = Unlocked (light sensor)
 
 String uuid = "";
 String correctUuid = "21592251154";
@@ -29,26 +33,55 @@ int number = 0;
 bool holding = false;
 bool longPressed = false;
 
-void drawScreen_1(void) {
-    display.fillScreen(0x0);
+// ===== LOCKED SCREEN =====
+void drawLocked() {
+    display.fillScreen(0x0000);
+    display.setTextWrap(false);
+    display.setTextColor(0xF800);
+    display.setTextSize(3);
+    display.setCursor(20, 35);
+    display.print("LOCKED");
+
     display.setTextColor(0xFFFF);
     display.setTextSize(2);
-    display.setTextWrap(false);
-    display.setCursor(20, 7);
-    display.print("");
-
-    display.setTextSize(9);
-    display.setCursor(15, 56);
-    display.print("00");
-
-    display.setTextSize(2);
-    display.setCursor(19, 22);
-    display.print("__ __ __");
+    display.setCursor(10, 85);
+    display.print("SCAN RFID");
 }
 
-void drawPin() {
-    display.fillScreen(0x0);
+// ===== UNLOCKED SCREEN =====
+void drawUnlocked() {
+    display.fillScreen(0x0000);
+    display.setTextWrap(false);
+    display.setTextColor(0x07E0);
+    display.setTextSize(3);
+    display.setCursor(10, 35);
+    display.print("UNLOCKED");
+
     display.setTextColor(0xFFFF);
+    display.setTextSize(2);
+    display.setCursor(10, 85);
+    display.print("ACCESS GRANTED");
+}
+
+// ===== DENIED SCREEN =====
+void drawDenied() {
+    display.fillScreen(0x0000);
+    display.setTextColor(0xF800);
+    display.setTextSize(3);
+    display.setCursor(10, 35);
+    display.print("DENIED");
+
+    display.setTextColor(0xFFFF);
+    display.setTextSize(2);
+    display.setCursor(10, 85);
+    display.print("INVALID CARD");
+}
+
+// ===== PIN SCREEN =====
+void drawPin() {
+    display.fillScreen(0x0000);
+    display.setTextColor(0xFFFF);
+    display.setTextWrap(false);
     display.setTextSize(2);
     display.setCursor(19, 22);
 
@@ -74,22 +107,15 @@ void drawPin() {
     display.print(number);
 }
 
+// ===== RFID DETAILS =====
 void ShowReaderDetails() {
     byte v = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
-    Serial.print(F("MFRC522 Software Version: 0x"));
-    Serial.print(v, HEX);
 
-    if (v == 0x91)
-        Serial.print(F(" = v1.0"));
-    else if (v == 0x92)
-        Serial.print(F(" = v2.0"));
-    else
-        Serial.print(F(" (unknown)"));
+    Serial.print(F("MFRC522 Version: 0x"));
+    Serial.println(v, HEX);
 
-    Serial.println("");
-
-    if ((v == 0x00) || (v == 0xFF)) {
-        Serial.println(F("WARNING: Communication failure"));
+    if (v == 0x00 || v == 0xFF) {
+        Serial.println(F("WARNING: RFID communication failure"));
     }
 }
 
@@ -105,22 +131,25 @@ void setup() {
     pinMode(sw, INPUT_PULLUP);
     pinMode(D3, INPUT);
 
+    analogReadResolution(12);
+
     preferences.begin("rfid", false);
     correctUuid = preferences.getString("uuid", correctUuid);
 
     waitForStart();
 
-    digitalWrite(Green, 0);
-    digitalWrite(Yellow, 0);
-    digitalWrite(Red, 0);
+    digitalWrite(Green, LOW);
+    digitalWrite(Yellow, LOW);
+    digitalWrite(Red, LOW);
 
-    drawScreen_1();
+    drawLocked();
     beep();
 }
 
 void loop() {
     unsigned long currentHoldTime = millis();
 
+    // ===== BUTTON HANDLING =====
     if (digitalRead(sw) == LOW) {
         if (!holding) {
             holding = true;
@@ -137,15 +166,18 @@ void loop() {
                 mode = 1;
                 codeIndex = 0;
                 number = 0;
-                digitalWrite(Green, 0);
-                digitalWrite(Yellow, 0);
+
+                digitalWrite(Green, LOW);
+                digitalWrite(Yellow, LOW);
+
                 beep();
                 drawPin();
             }
             else {
                 mode = 0;
-                digitalWrite(Yellow, 0);
-                drawScreen_1();
+                digitalWrite(Yellow, LOW);
+
+                drawLocked();
                 beep();
             }
         }
@@ -164,25 +196,30 @@ void loop() {
                     enteredCode[2] == masterCode[2]) {
 
                     mode = 2;
-                    digitalWrite(Yellow, 1);
+                    digitalWrite(Yellow, HIGH);
 
-                    display.fillScreen(0x0);
+                    display.fillScreen(0x0000);
+                    display.setTextColor(0xFFFF);
                     display.setTextSize(2);
                     display.setCursor(10, 40);
                     display.print("MASTER MODE");
                     display.setCursor(10, 70);
                     display.print("SCAN CARD");
+
                     beep();
                 }
                 else {
                     mode = 0;
-                    digitalWrite(Red, 1);
+                    digitalWrite(Red, HIGH);
+
+                    drawDenied();
                     beep();
                     delay(100);
                     beep();
                     delay(900);
-                    digitalWrite(Red, 0);
-                    drawScreen_1();
+
+                    digitalWrite(Red, LOW);
+                    drawLocked();
                 }
             }
             else {
@@ -193,7 +230,7 @@ void loop() {
         holding = false;
     }
 
-    // VR selection
+    // ===== VR PIN SELECTION =====
     if (mode == 1) {
         int newNumber = map(analogRead(VR), 0, 4095, 0, 99);
         newNumber = constrain(newNumber, 0, 99);
@@ -204,19 +241,20 @@ void loop() {
         }
     }
 
-    // Photoresistor mode
+    // ===== PHOTORESISTOR =====
     if (mode == 3 &&
         currentHoldTime - previousLightTime >= 200) {
 
         previousLightTime = currentHoldTime;
         int lightValue = analogRead(D3);
 
-        display.fillScreen(0x0);
+        display.fillScreen(0x0000);
         display.setTextColor(0xFFFF);
         display.setTextSize(2);
         display.setCursor(10, 20);
-        display.print("LIGHT");
+        display.print("UNLOCKED");
 
+        display.setTextColor(0x07E0);
         display.setTextSize(4);
         display.setCursor(10, 60);
         display.print(lightValue);
@@ -227,7 +265,7 @@ void loop() {
 
     if (mode == 1) return;
 
-    // Original RFID reading
+    // ===== RFID READING =====
     if (!mfrc522.PICC_IsNewCardPresent() ||
         !mfrc522.PICC_ReadCardSerial()) {
         delay(50);
@@ -235,7 +273,7 @@ void loop() {
     }
 
     uuid = "";
-    Serial.print(F("Card UID:"));
+    Serial.print(F("Card UID: "));
 
     for (byte i = 0; i < mfrc522.uid.size; i++) {
         uuid += mfrc522.uid.uidByte[i];
@@ -243,42 +281,69 @@ void loop() {
 
     Serial.println(uuid);
 
+    // ===== REGISTER NEW CARD =====
     if (mode == 2) {
-        // Master mode: register any scanned card
         correctUuid = uuid;
         preferences.putString("uuid", correctUuid);
 
-        digitalWrite(Green, 1);
+        digitalWrite(Green, HIGH);
         beep();
-        delay(1000);
-        digitalWrite(Green, 0);
-//
-        display.fillScreen(0x0);
+
+        display.fillScreen(0x0000);
+        display.setTextColor(0x07E0);
         display.setTextSize(2);
         display.setCursor(10, 40);
         display.print("CARD SAVED");
-    }
-    else if (uuid == correctUuid) {
-        digitalWrite(Green, 1);
-        beep();
+
         delay(1000);
-        digitalWrite(Green, 0);
+        digitalWrite(Green, LOW);
+
+        // Return to locked mode
+        mode = 0;
+        digitalWrite(Yellow, LOW);
+        drawLocked();
+    }
+
+    // ===== AUTHORIZED CARD =====
+    else if (uuid == correctUuid) {
+        digitalWrite(Green, HIGH);
+        beep();
 
         if (mode == 3) {
+            // Lock system
             mode = 0;
-            drawScreen_1();
+            drawLocked();
+            Serial.println("SYSTEM LOCKED");
         }
         else {
+            // Unlock system
             mode = 3;
+            drawUnlocked();
+            Serial.println("SYSTEM UNLOCKED");
         }
+
+        delay(1000);
+        digitalWrite(Green, LOW);
     }
+
+    // ===== INVALID CARD =====
     else {
-        digitalWrite(Red, 1);
+        digitalWrite(Red, HIGH);
+        drawDenied();
+
         beep();
-        delay(10);
+        delay(100);
         beep();
-        delay(990);
-        digitalWrite(Red, 0);
+        delay(900);
+
+        digitalWrite(Red, LOW);
+
+        if (mode == 3) {
+            drawUnlocked();
+        }
+        else {
+            drawLocked();
+        }
     }
 
     mfrc522.PICC_HaltA();
